@@ -120,12 +120,23 @@ class StudyClient extends Client {
         try {
             console.log('Iniciando atualização dos Slash Commands (/) ...');
             
+            // ⭐ MUDANÇA: Lógica Condicional para Desenvolvimento vs. Produção
+            // Se process.env.GUILD_ID existir (desenvolvimento), registra na Guilda (mais rápido).
+            // Se não existir (produção), registra globalmente (mais estável).
+            const route = process.env.GUILD_ID
+                ? Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID)
+                : Routes.applicationCommands(process.env.CLIENT_ID);
+
             await rest.put(
-                Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID),
+                route,
                 { body: commandsData },
             );
 
-            console.log('Slash Commands registrados com sucesso!');
+            if (process.env.GUILD_ID) {
+                console.log('✅ Slash Commands registrados na GUILDA com sucesso! (Lembre-se de dar Ctrl+R no Discord para limpar o cache)');
+            } else {
+                console.log('✅ Slash Commands registrados GLOBALMENTE com sucesso! (Pode levar até 1 hora para aparecer)');
+            }
         } catch (error) {
             console.error("Erro ao registrar comandos:", error);
         }
