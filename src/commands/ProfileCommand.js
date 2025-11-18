@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, EmbedBuilder } = require("discord.js");
 const StudyTrackerService = require("../services/StudyTrackerService"); 
+const MathUtils = require('../utils/MathUtils');
 
 module.exports = {
     // Estrutura do Slash Command
@@ -100,6 +101,42 @@ module.exports = {
         const empty = progressBarLength - filled;
         const bar = "█".repeat(filled) + "░".repeat(empty);
 
+        // Cálculo de melhoria: compara hoje (rawStats.dailyTime) com ontem (extraído do histórico)
+        const todayHours = +( (rawStats.dailyTime || 0) / (1000 * 60 * 60) ).toFixed(2);
+        const lastDate = rawStats.lastStudyDate || Date.now();
+        const last2 = MathUtils.hoursArrayForRange(rawStats.history, lastDate, 2); // [yesterday, today]
+        const yesterdayHours = +(last2[0] || 0).toFixed(2);
+
+        let improvementPctText = 'Dados insuficientes para calcular melhoria.';
+        let projectionText = '';
+        if (yesterdayHours > 0) {
+            const r = (todayHours - yesterdayHours) / yesterdayHours; // razão (p.ex. 0.01 = +1%)
+            const rPct = +(r * 100).toFixed(2);
+            improvementPctText = `${rPct >= 0 ? '▲' : '▼'} ${Math.abs(rPct)}% (hoje vs ontem)`;
+
+            // Projeção por PG: se mantiver essa melhoria relativa, nextDay = today * (1 + r)
+            const daysToProj = 7;
+            const proj = [];
+            for (let k = 1; k <= daysToProj; k++) {
+                const val = +(todayHours * Math.pow(1 + r, k)).toFixed(2);
+                const pct = r >= 0 ? +((Math.pow(1 + r, k) - 1) * 100).toFixed(2) : +((1 - Math.pow(1 + r, k)) * 100).toFixed(2);
+                proj.push(`Dia +${k}: ${val}h (${r >= 0 ? '+' : '-'}${Math.abs(pct)}% em relação a hoje)`);
+            }
+            projectionText = proj.join('\n');
+        } else if (yesterdayHours === 0 && todayHours > 0) {
+            // Caso ontem 0: melhoria indefinida; mostra crescimento absoluto e projeta com um pequeno r padrão (ex: 0.01 = 1%)
+            improvementPctText = `▲ Crescimento a partir de 0h — aumento absoluto: ${todayHours}h hoje`;
+            const r = 0.01; // default 1% se quiser projetar
+            const daysToProj = 7;
+            const proj = [];
+            for (let k = 1; k <= daysToProj; k++) {
+                const val = +(todayHours * Math.pow(1 + r, k)).toFixed(2);
+                const pct = +((Math.pow(1 + r, k) - 1) * 100).toFixed(2);
+                proj.push(`Dia +${k}: ${val}h (+${pct}% em relação a hoje)`);
+            }
+            projectionText = proj.join('\n');
+        }
+
         const embed = new EmbedBuilder()
             .setTitle(`📊 Estatísticas de ${targetUser.username}`)
             .setDescription(`Seja bem-vindo(a), Professor(a) ${targetUser.username}!`)
@@ -112,7 +149,9 @@ module.exports = {
                     value: `${bar} ${stats.progressPercentage}% concluído`, 
                     inline: false 
                 },
-                { name: "Análise Estatística", value: stats.consistency, inline: false }
+                { name: "Análise Estatística", value: stats.consistency, inline: false },
+                { name: "Melhoria (hoje vs ontem)", value: improvementPctText, inline: false },
+                { name: "Projeção (próximos 7 dias se mantiver essa melhoria)", value: projectionText || 'Sem dados para projeção', inline: false }
             )
             .setColor(0x0099FF)
             .setTimestamp()
