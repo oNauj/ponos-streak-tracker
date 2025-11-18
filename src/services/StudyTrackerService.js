@@ -21,9 +21,13 @@ class StudyTrackerService {
 
         // 1. Lógica de Virada de Dia e Streak Check
         if (MathUtils.isNewDay(user.lastStudyDate)) {
-            // Se o dia anterior foi registrado (dailyTime > 0), salva no histórico
+            // Se o dia anterior foi registrado (dailyTime > 0), salva no histórico com data
             if (user.dailyTime > 0) {
-                user.history.push(user.dailyTime);
+                const prevDate = user.lastStudyDate ? new Date(user.lastStudyDate) : new Date(now);
+                prevDate.setHours(0,0,0,0);
+                const dateStr = prevDate.toISOString().slice(0,10);
+                if (!Array.isArray(user.history)) user.history = [];
+                user.history.push({ date: dateStr, ms: user.dailyTime });
             }
             
             // Verifica a meta de streak do dia anterior
