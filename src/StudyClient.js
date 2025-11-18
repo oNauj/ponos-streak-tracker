@@ -36,7 +36,7 @@ class StudyClient extends Client {
     }
 
     loadCommands() {
-        const commandsArray = [RankCommand, ProfileCommand];
+        const commandsArray = [RankCommand, ProfileCommand, require('./commands/TransferCommand')];
         
         for (const command of commandsArray) {
             this.commands.set(command.data.name, command);
@@ -69,9 +69,15 @@ class StudyClient extends Client {
             // Despacha a execução do comando, injetando as dependências necessárias
             if (interaction.commandName === 'rank') {
                 // O RankCommand precisa do DB e do Client (para buscar nomes)
-                await command.execute(interaction, this.db, this); 
-            } else {
+                await command.execute(interaction, this.db, this);
+            } else if (interaction.commandName === 'perfil') {
                 // O ProfileCommand precisa apenas do TrackerService
+                await command.execute(interaction, this.tracker);
+            } else if (interaction.commandName === 'transferir') {
+                // TransferCommand usa o trackerService (tem acesso ao DB)
+                await command.execute(interaction, this.tracker);
+            } else {
+                // Fallback: tente executar passando tracker (compatível com maioria)
                 await command.execute(interaction, this.tracker);
             }
         } catch (error) {
