@@ -21,7 +21,7 @@ module.exports = {
         const rawStats = trackerService.db.getUser(targetUser.id);
         
         if (rawStats.totalTime === 0 && targetUser.id === interaction.user.id) {
-            return interaction.reply({ content: "Você ainda não tem tempo registrado. Comece a compartilhar sua tela para estudar!", ephemeral: true });
+            return interaction.reply({ content: "Você ainda não tem tempo registrado. Comece a compartilhar sua tela para estudar!", flags: 64 });
         }
 
         // Obtém os dados formatados do serviço de lógica de negócios
