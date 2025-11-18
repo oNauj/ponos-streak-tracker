@@ -9,7 +9,15 @@ module.exports = {
         .addUserOption(option => 
             option.setName('usuario')
                 .setDescription('O usuário para ver o perfil')
-                .setRequired(false)),
+                .setRequired(false))
+        .addStringOption(option => 
+            option.setName('range')
+                .setDescription('Mostrar gráfico dos últimos dias')
+                .addChoices(
+                    { name: 'Últimos 7 dias', value: '7' },
+                    { name: 'Últimos 30 dias', value: '30' }
+                ).setRequired(false)
+        ),
 
     /**
      * Como vai funcionar o comando
@@ -19,9 +27,68 @@ module.exports = {
     async execute(interaction, trackerService) {
         const targetUser = interaction.options.getUser('usuario') || interaction.user;
         const rawStats = trackerService.db.getUser(targetUser.id);
+        const range = interaction.options.getString('range');
         
         if (rawStats.totalTime === 0 && targetUser.id === interaction.user.id) {
             return interaction.reply({ content: "Você ainda não tem tempo registrado. Comece a compartilhar sua tela para estudar!", flags: 64 });
+        }
+
+        // Se pediu gráfico, gera gráfico dos últimos N dias via QuickChart
+        if (range) {
+            const days = parseInt(range, 10);
+            const labels = [];
+            const hours = require('../utils/MathUtils').hoursArrayForRange(rawStats.history, rawStats.lastStudyDate, days);
+            // montar labels (últimos dias)
+            const dayMs = 24 * 60 * 60 * 1000;
+            for (let i = days - 1; i >= 0; i--) {
+                const d = new Date((rawStats.lastStudyDate || Date.now()) - (i * dayMs));
+                labels.push(`${d.getDate()}/${d.getMonth()+1}`);
+            }
+
+            const chartConfig = {
+                type: 'line',
+                data: {
+                    labels,
+                    datasets: [{
+                        label: 'Horas por dia',
+                        data: hours,
+                        fill: true,
+                        backgroundColor: 'rgba(0,153,255,0.1)',
+                        borderColor: 'rgba(0,153,255,1)'
+                    }]
+                },
+                options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
+            };
+
+            try {
+                const res = await fetch('https://quickchart.io/chart/create', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ chart: chartConfig, backgroundColor: 'white', width: 800, height: 400 })
+                });
+                const body = await res.json();
+                const imageUrl = body.url;
+
+                const embed = new EmbedBuilder()
+                    .setTitle(`📈 ${targetUser.username} — Últimos ${days} dias`)
+                    .setImage(imageUrl)
+                    .setColor(0x0099FF)
+                    .setFooter({ text: 'Use /perfil sem range para ver resumo.' });
+
+                // adiciona pequenas estatísticas abaixo
+                const consistencyPct = require('../utils/MathUtils').consistencyPercent(rawStats.history, rawStats.lastStudyDate, Math.min(days, 30));
+                const stddev = require('../utils/MathUtils').stdDevHours(rawStats.history, rawStats.lastStudyDate, Math.min(days, 30));
+
+                embed.addFields(
+                    { name: 'Consistência (%)', value: `${consistencyPct}%`, inline: true },
+                    { name: 'Desvio Padrão (h)', value: `${stddev}h`, inline: true }
+                );
+
+                return interaction.reply({ embeds: [embed] });
+            } catch (err) {
+                console.error('Erro ao gerar gráfico:', err);
+                return interaction.reply({ content: 'Não foi possível gerar o gráfico no momento.', flags: 64 });
+            }
         }
 
         // Obtém os dados formatados do serviço de lógica de negócios

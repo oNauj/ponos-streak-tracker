@@ -1,142 +1,109 @@
-const { SlashCommandBuilder, EmbedBuilder } = require("discord.js");
-const MathUtils = require("../utils/MathUtils");
-const MS_HOUR = 1000 * 60 * 60;
-
-// lê pesos do env (fallbacks)
-function readWeights() {
-    const alpha = parseFloat(process.env.PROD_ALPHA) || 0.5;
-    const beta = parseFloat(process.env.PROD_BETA) || 0.3;
-    const gamma = parseFloat(process.env.PROD_GAMMA) || 0.2;
-    const delta = parseFloat(process.env.PROD_DELTA) || 0.1;
-    return { alpha, beta, gamma, delta };
-}
-
-function minMaxNormalize(arr) {
-    if (!arr || arr.length === 0) return [];
-    const min = Math.min(...arr);
-    const max = Math.max(...arr);
-    if (max === min) return arr.map(() => 0.5);
-    return arr.map(v => (v - min) / (max - min));
-}
+const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const MathUtils = require('../utils/MathUtils');
 
 module.exports = {
-    // 1. Definição do Comando (Estrutura do Slash Command)
     data: new SlashCommandBuilder()
         .setName('rank')
-        .setDescription('Mostra o ranking de quem mais estudou por tempo total.'),
+        .setDescription('Mostra o ranking de produtividade entre usuários.'),
 
-    /**
-     * 2. Lógica de Execução do Comando
-     * @param {object} interaction O objeto de interação do Discord.
-     * @param {object} dbService O serviço de banco de dados (passado pelo cliente).
-     * @param {object} client O objeto Client do Discord (para buscar nomes).
-     */
-    async execute(interaction, dbService, client) {
-        const users = dbService.getAllUsers();
-
-        // Calcular métricas por usuário
-        const rows = users.map(u => {
-            const totalHours = (u.totalTime || 0) / MS_HOUR;
-
-            // Extrai horas diárias
-            const hoursArr = MathUtils.hoursFromHistory(u.history || []);
-
-            // calcula desvio padrão e média via util
-            const desc = MathUtils.describeHours(hoursArr);
-
-            // calcula média de streaks (segmentos de dias consecutivos)
-            const streakSegments = [];
-            // se history tem objetos com date, usa datas; caso contrário, tenta inferir
-            if (Array.isArray(u.history) && u.history.length > 0 && typeof u.history[0] === 'object' && u.history[0].date) {
-                const dates = Array.from(new Set(u.history.map(h => h.date))).sort();
-                let cur = 0;
-                let prev = null;
-                for (const d of dates) {
-                    const dt = new Date(d + 'T00:00:00');
-                    if (prev && (dt.getTime() - prev.getTime()) === 24*60*60*1000) {
-                        cur++;
-                    } else {
-                        if (cur > 0) streakSegments.push(cur);
-                        cur = 1; // current day starts new run
-                    }
-                    prev = dt;
-                }
-                if (cur > 0) streakSegments.push(cur);
-            } else if (Array.isArray(u.history) && u.history.length > 0) {
-                // fallback: consider history array entries as consecutive days ending at lastStudyDate
-                // treat as one run of length = history.length
-                streakSegments.push(u.history.length);
-            }
-
-            const avgStreak = streakSegments.length === 0 ? 0 : (streakSegments.reduce((a,b)=>a+b,0)/streakSegments.length);
-
-            // consistência: % de dias com estudo desde o primeiro registro até hoje
-            let consistencyPercent = 0;
+    async execute(interaction, db, client) {
+        try {
+            await interaction.deferReply();
+        } catch (err) {
+            console.error('Falha ao deferReply em /rank:', err);
             try {
-                if (Array.isArray(u.history) && u.history.length > 0 && typeof u.history[0] === 'object' && u.history[0].date) {
-                    const dates = Array.from(new Set(u.history.map(h => h.date))).sort();
-                    const first = new Date(dates[0] + 'T00:00:00');
-                    const last = new Date(); last.setHours(0,0,0,0);
-                    const totalDays = Math.floor((last.getTime() - first.getTime()) / (24*60*60*1000)) + 1;
-                    const studyDays = dates.length;
-                    consistencyPercent = totalDays > 0 ? (studyDays / totalDays) * 100 : 0;
-                } else {
-                    // fallback: percent of days with study in last 30
-                    const studyDays = Array.isArray(u.history) ? u.history.length : 0;
-                    consistencyPercent = Math.min(100, (studyDays / 30) * 100);
-                }
-            } catch (e) { consistencyPercent = 0; }
-
-            return {
-                id: u.id,
-                totalHours,
-                avgStreak,
-                consistencyPercent,
-                stdDev: desc.stdDev,
-                desc
-            };
-        });
-
-        if (rows.length === 0) return interaction.reply({ content: 'Sem usuários no banco.', flags: 64 });
-
-        // Normalizar componentes para combinar
-        const Ts = rows.map(r => r.totalHours);
-        const Ss = rows.map(r => r.avgStreak);
-        const Cs = rows.map(r => r.consistencyPercent);
-        const Ds = rows.map(r => r.stdDev);
-
-        const nT = minMaxNormalize(Ts);
-        const nS = minMaxNormalize(Ss);
-        const nC = minMaxNormalize(Cs);
-        const nD = minMaxNormalize(Ds);
-
-        const weights = readWeights();
-        const scored = rows.map((r, idx) => {
-            const score = weights.alpha * nT[idx] + weights.beta * nS[idx] + weights.gamma * nC[idx] - weights.delta * nD[idx];
-            return { ...r, score };
-        }).sort((a,b)=>b.score - a.score);
-
-        // Monta tabela de saída (code block com tabs)
-        const header = 'Usuário\tTotal (h)\tMédia de Streak\tConsistência (%)\tDesvio Padrão (h)';
-        const lines = [header];
-        for (const row of scored) {
-            let name = row.id;
-            try { const user = await client.users.fetch(row.id); name = user.username; } catch(e){}
-            lines.push(`${name}\t${row.totalHours.toFixed(1)}\t${row.avgStreak.toFixed(1)}\t${row.consistencyPercent.toFixed(0)}\t${row.stdDev.toFixed(2)}`);
+                await interaction.reply({ content: 'Não foi possível iniciar o comando (interação inválida).', flags: 64 });
+            } catch (_) {}
+            return;
         }
 
-        const formula = `Produtividade = α·T + β·S + γ·C - δ·D\n(α=${weights.alpha}, β=${weights.beta}, γ=${weights.gamma}, δ=${weights.delta})`;
+        const users = db.getAllUsers();
+        if (!users || users.length === 0) {
+            return interaction.editReply('Nenhum dado disponível para ranking.');
+        }
+
+        const ALPHA = parseFloat(process.env.PROD_ALPHA) || 0.5;
+        const BETA = parseFloat(process.env.PROD_BETA) || 0.3;
+        const GAMMA = parseFloat(process.env.PROD_GAMMA) || 0.2;
+        const DELTA = parseFloat(process.env.PROD_DELTA) || 0.1;
+
+        const dataset = [];
+        for (const u of users) {
+            const id = u.id;
+            const totalHours = +(((u.totalTime || 0) / (1000 * 60 * 60)).toFixed(1));
+            const avgStreak = MathUtils.meanStreakFromHistory(u.history || [], u.lastStudyDate || Date.now(), 365);
+            const consistency = MathUtils.consistencyPercent(u.history || [], u.lastStudyDate || Date.now(), 30);
+            const stddev = MathUtils.stdDevHours(u.history || [], u.lastStudyDate || Date.now(), 30);
+
+            const score = +(ALPHA * totalHours + BETA * avgStreak + GAMMA * consistency - DELTA * stddev).toFixed(3);
+            dataset.push({ id, totalHours, avgStreak, consistency, stddev, score });
+        }
+
+        dataset.sort((a, b) => b.score - a.score);
+
+        // --- FORMATO COMPACTO PARA O RANKING ---
+
+        const maxUsers = 10; 
+        const topUsers = dataset.slice(0, maxUsers);
+
+        let rankList = '';
+        
+        // Cabeçalho da "tabela"
+        rankList += '`# | Usuário          | Score   | Tempo | Cons. | D.P.`\n';
+        rankList += '`----------------------------------------------------`\n';
+
+        for (let i = 0; i < topUsers.length; i++) {
+            const row = topUsers[i];
+            let name = row.id;
+            
+            try {
+                const user = await client.users.fetch(row.id);
+                // Usa um limite no nome para não quebrar a formatação da "tabela"
+                if (user && user.username) name = user.username.slice(0, 15); 
+            } catch (_) {}
+
+            const rank = i + 1;
+            const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `\`${rank}\``;
+            
+            // Usando espaçamento fixo com crases para simular uma tabela
+            rankList += 
+                `${medal} ` + 
+                `\`${name.padEnd(15, ' ').slice(0, 15)}\` ` + // Nome
+                `\`${row.score.toFixed(3).padEnd(6, '0')}\` ` + // Score
+                `\`${row.totalHours.toFixed(1).padEnd(4, '0')}h\` ` + // Horas Totais
+                `\`${row.consistency.toFixed(0).padStart(2, ' ')}%\` ` + // Consistência
+                `\`${row.stddev.toFixed(1).padEnd(3, '0')}h\`` + // Desvio Padrão
+                `\n`;
+        }
+
+        const rankField = {
+            name: '📈 Top Focados (Score | H | Cons. | D.P.)',
+            value: rankList || 'Nenhum usuário no ranking ainda.',
+            inline: false
+        };
+
+        // --- FORMATAÇÃO DA FÓRMULA SEM LATEX ---
+        const formulaText = 
+            'Esta pontuação de produtividade (P) combina seu tempo total de estudo, a consistência dos seus streaks, sua regularidade e penaliza a irregularidade (Desvio Padrão).\n\n' + 
+            '**Fórmula:**\n' + 
+            '```\n' + // Código de bloco para clareza
+            'P = α * T + β * S + γ * C - δ * D\n' +
+            '```\n' +
+            '*Onde: T (Horas Totais), S (Streak Médio), C (Consistência), D (Desvio Padrão).*\n' +
+            'Os pesos (α, β, γ, δ) são configuráveis via variáveis de ambiente.';
 
         const embed = new EmbedBuilder()
             .setTitle('🏆 Ranking de Produtividade')
-            .setDescription('Tabela ordenada por índice de produtividade (maior → menor)')
-            .addFields(
-                { name: 'Tabela', value: '```\n' + lines.join('\n') + '\n```' },
-                { name: 'Fórmula', value: formula }
-            )
+            .setDescription('Aqui está a lista dos usuários mais focados e consistentes!')
+            .addFields(rankField)
+            .addFields({
+                name: 'Detalhes da Pontuação',
+                value: formulaText,
+                inline: false
+            })
             .setColor(0xFFD700)
-            .setTimestamp();
+            .setFooter({ text: `Exibindo os Top ${topUsers.length} de ${dataset.length} usuários. | Pesos: α=${ALPHA}, β=${BETA}, γ=${GAMMA}, δ=${DELTA}` });
 
-        await interaction.reply({ embeds: [embed] });
+        await interaction.editReply({ embeds: [embed] });
     }
 };

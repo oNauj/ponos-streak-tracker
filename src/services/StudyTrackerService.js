@@ -23,10 +23,7 @@ class StudyTrackerService {
         if (MathUtils.isNewDay(user.lastStudyDate)) {
             // Se o dia anterior foi registrado (dailyTime > 0), salva no histórico com data
             if (user.dailyTime > 0) {
-                const prevDate = user.lastStudyDate ? new Date(user.lastStudyDate) : new Date(now);
-                prevDate.setHours(0,0,0,0);
-                const dateStr = prevDate.toISOString().slice(0,10);
-                if (!Array.isArray(user.history)) user.history = [];
+                const dateStr = MathUtils.dateStringFromTimestamp(user.lastStudyDate || (now - 24 * 60 * 60 * 1000));
                 user.history.push({ date: dateStr, ms: user.dailyTime });
             }
             
