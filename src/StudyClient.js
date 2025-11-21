@@ -117,26 +117,33 @@ class StudyClient extends Client {
 
         const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
 
-        try {
-            console.log('Iniciando atualização dos Slash Commands (/) ...');
-            
-            // ⭐ MUDANÇA: Lógica Condicional para Desenvolvimento vs. Produção
-            // Se process.env.GUILD_ID existir (desenvolvimento), registra na Guilda (mais rápido).
-            // Se não existir (produção), registra globalmente (mais estável).
-            const route = process.env.GUILD_ID
-                ? Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID)
-                : Routes.applicationCommands(process.env.CLIENT_ID);
+        // Verifica se as variáveis de ambiente necessárias para o registro da Guilda estão presentes
+        if (!process.env.CLIENT_ID || !process.env.GUILD_ID) {
+            console.error("ERRO: CLIENT_ID e GUILD_ID devem estar definidos no .env para forçar o registro de comandos na Guilda.");
+            return;
+        }
+        
+        const guildRoute = Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID);
 
+        try {
+            console.log(`Debug: Tentando deletar/registrar comandos na Guilda ID: ${process.env.GUILD_ID}`); 
+            console.log('Iniciando **DELEÇÃO FORÇADA** dos Slash Commands antigos na Guilda...');
+            
+            // 1. DELETA TODOS OS COMANDOS DA GUILDA
             await rest.put(
-                route,
+                guildRoute,
+                { body: [] }, // Array vazio deleta todos os comandos existentes
+            );
+            console.log('✅ Comandos antigos deletados com sucesso.');
+            
+            // 2. REGISTRA OS NOVOS COMANDOS
+            console.log('Iniciando **REGISTRO** dos Slash Commands novos...');
+            await rest.put(
+                guildRoute,
                 { body: commandsData },
             );
 
-            if (process.env.GUILD_ID) {
-                console.log('✅ Slash Commands registrados na GUILDA com sucesso! (Lembre-se de dar Ctrl+R no Discord para limpar o cache)');
-            } else {
-                console.log('✅ Slash Commands registrados GLOBALMENTE com sucesso! (Pode levar até 1 hora para aparecer)');
-            }
+            console.log('✅ Slash Commands registrados com sucesso! (Ação Imediata)');
         } catch (error) {
             console.error("Erro ao registrar comandos:", error);
         }
