@@ -5,6 +5,7 @@ const StudyTrackerService = require("./services/StudyTrackerService");
 // Importa os comandos
 const RankCommand = require("./commands/RankCommand");
 const ProfileCommand = require("./commands/ProfileCommand");
+const RankDebugCommand = require("./commands/RankDebugCommand");
 
 // Classe Principal do Bot - Estendida da classe Client do Discord
 class StudyClient extends Client {
@@ -36,7 +37,7 @@ class StudyClient extends Client {
     }
 
     loadCommands() {
-        const commandsArray = [RankCommand, ProfileCommand, require('./commands/TransferCommand')];
+        const commandsArray = [RankCommand, ProfileCommand, require('./commands/TransferCommand'), RankDebugCommand];
         
         for (const command of commandsArray) {
             this.commands.set(command.data.name, command);
@@ -76,7 +77,11 @@ class StudyClient extends Client {
             } else if (interaction.commandName === 'transferir') {
                 // TransferCommand usa o trackerService (tem acesso ao DB)
                 await command.execute(interaction, this.tracker);
-            } else {
+            } else if (interaction.commandName === 'rankdebug') {
+                // RankDebugCommand precisa do DB e do Client
+                await command.execute(interaction, this.db, this);
+            }
+            else {
                 // Fallback: tente executar passando tracker (compatível com maioria)
                 await command.execute(interaction, this.tracker);
             }

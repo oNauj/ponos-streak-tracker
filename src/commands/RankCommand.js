@@ -1,108 +1,152 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const MathUtils = require('../utils/MathUtils');
+const { SlashCommandBuilder, EmbedBuilder } = require("discord.js");
+
+// -----------------------------
+// CÁLCULO DO CV
+// -----------------------------
+function calculateStats(values) {
+    if (!values || values.length === 0)
+        return { mean: 0, stdDev: 0, cv: 0 };
+
+    const n = values.length;
+    const mean = values.reduce((a, b) => a + b, 0) / n;
+
+    if (n === 1) return { mean, stdDev: 0, cv: 0 }; // evita NaN com 1 valor
+
+    const variance = values.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / n;
+    const stdDev = Math.sqrt(variance);
+
+    return { mean, stdDev, cv: mean === 0 ? 0 : stdDev / mean };
+}
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('rank')
-        .setDescription('Mostra o ranking de produtividade entre usuários.'),
+        .setName("rank")
+        .setDescription("Exibe o ranking de produtividade baseado em horas, consistência e streak."),
 
     async execute(interaction, db, client) {
-        try {
-            await interaction.deferReply();
-        } catch (err) {
-            console.error('Falha ao deferReply em /rank:', err);
-            try {
-                await interaction.reply({ content: 'Não foi possível iniciar o comando (interação inválida).', flags: 64 });
-            } catch (_) {}
-            return;
-        }
+        try { await interaction.deferReply(); }
+        catch { return; }
 
         const users = db.getAllUsers();
-        if (!users || users.length === 0) {
-            return interaction.editReply('Nenhum dado disponível para ranking.');
-        }
+        if (!users || users.length === 0)
+            return interaction.editReply("🚫 Nenhum usuário encontrado para calcular o ranking.");
 
-        const ALPHA = parseFloat(process.env.PROD_ALPHA) || 0.5;
-        const BETA = parseFloat(process.env.PROD_BETA) || 0.3;
-        const GAMMA = parseFloat(process.env.PROD_GAMMA) || 0.2;
-        const DELTA = parseFloat(process.env.PROD_DELTA) || 0.1;
+        const GAMMA = parseFloat(process.env.PROD_GAMMA) || 0.5;
+        const RANK_LIMIT = 10;
 
         const dataset = [];
+
         for (const u of users) {
-            const id = u.id;
-            const totalHours = +(((u.totalTime || 0) / (1000 * 60 * 60)).toFixed(1));
-            const avgStreak = MathUtils.meanStreakFromHistory(u.history || [], u.lastStudyDate || Date.now(), 365);
-            const consistency = MathUtils.consistencyPercent(u.history || [], u.lastStudyDate || Date.now(), 30);
-            const stddev = MathUtils.stdDevHours(u.history || [], u.lastStudyDate || Date.now(), 30);
 
-            const score = +(ALPHA * totalHours + BETA * avgStreak + GAMMA * consistency - DELTA * stddev).toFixed(3);
-            dataset.push({ id, totalHours, avgStreak, consistency, stddev, score });
+            // -----------------------------
+            // HORAS TOTAIS
+            // -----------------------------
+            const totalHours = (u.totalTime || 0) / 3600000;
+            if (totalHours <= 0) continue;
+
+            // -----------------------------
+            // STREAK (limitado a 7)
+            // -----------------------------
+            const streak7 = Math.min(7, u.currentStreak || 0);
+
+            // -----------------------------
+            // HORAS PARA CÁLCULO DO CV
+            // -----------------------------
+            const historyHours = (u.history || []).map(h =>
+                h.ms ? h.ms / 3600000 : 0
+            );
+
+            // adiciona o dailyTime como mais um ponto do histórico
+            if (u.dailyTime && u.dailyTime > 0) {
+                historyHours.push(u.dailyTime / 3600000);
+            }
+
+            const stats = calculateStats(historyHours);
+            const CV = stats.cv;
+
+            // -----------------------------
+            // FÓRMULA FINAL
+            // -----------------------------
+            const streakFactor = 1 + (streak7 / 7);
+            const denominator = (CV + GAMMA) || GAMMA;
+
+            const score = (totalHours * streakFactor) / denominator;
+
+            dataset.push({
+                id: u.id,
+                score,
+                hours: totalHours,
+                streak7,
+                cv: CV
+            });
         }
 
+        // -----------------------------
+        // ORDENAR & PEGAR TOP 10
+        // -----------------------------
         dataset.sort((a, b) => b.score - a.score);
+        const topUsers = dataset.slice(0, RANK_LIMIT);
 
-        // --- FORMATO COMPACTO PARA O RANKING ---
+        let description = "";
 
-        const maxUsers = 10; 
-        const topUsers = dataset.slice(0, maxUsers);
-
-        let rankList = '';
-        
-        // Cabeçalho da "tabela"
-        rankList += '`# | Usuário          | Score   | Tempo | Cons. | D.P.`\n';
-        rankList += '`----------------------------------------------------`\n';
-
+        // -----------------------------
+        // MONTAR A LISTA VISUAL
+        // -----------------------------
         for (let i = 0; i < topUsers.length; i++) {
-            const row = topUsers[i];
-            let name = row.id;
-            
-            try {
-                const user = await client.users.fetch(row.id);
-                // Usa um limite no nome para não quebrar a formatação da "tabela"
-                if (user && user.username) name = user.username.slice(0, 15); 
-            } catch (_) {}
-
+            const d = topUsers[i];
             const rank = i + 1;
-            const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `\`${rank}\``;
-            
-            // Usando espaçamento fixo com crases para simular uma tabela
-            rankList += 
-                `${medal} ` + 
-                `\`${name.padEnd(15, ' ').slice(0, 15)}\` ` + // Nome
-                `\`${row.score.toFixed(3).padEnd(6, '0')}\` ` + // Score
-                `\`${row.totalHours.toFixed(1).padEnd(4, '0')}h\` ` + // Horas Totais
-                `\`${row.consistency.toFixed(0).padStart(2, ' ')}%\` ` + // Consistência
-                `\`${row.stddev.toFixed(1).padEnd(3, '0')}h\`` + // Desvio Padrão
-                `\n`;
+
+            let medal = `#${rank}`;
+            if (rank === 1) medal = "🥇";
+            if (rank === 2) medal = "🥈";
+            if (rank === 3) medal = "🥉";
+
+            // -----------------------------
+            // MENÇÃO CLICÁVEL
+            // -----------------------------
+            let mention = `<@${d.id}>`;
+
+            try {
+                const member = await interaction.guild.members.fetch(d.id);
+                mention = member.toString();
+            } catch {
+                try {
+                    const user = await client.users.fetch(d.id);
+                    mention = `<@${user.id}>`;
+                } catch {
+                    mention = `Usuário (${d.id})`;
+                }
+            }
+
+            description += 
+`**${medal} ${mention} — ${d.score.toFixed(1)} pts**
+🕒 ${Math.round(d.hours)}h  
+🔥 Streak: ${d.streak7}/7  
+📊 CV: ${(d.cv * 100).toFixed(1)}%
+
+`;
         }
 
-        const rankField = {
-            name: '📈 Top Focados (Score | H | Cons. | D.P.)',
-            value: rankList || 'Nenhum usuário no ranking ainda.',
-            inline: false
-        };
-
-        // --- FORMATAÇÃO DA FÓRMULA SEM LATEX ---
-        const formulaText = 
-            'Esta pontuação de produtividade (P) combina seu tempo total de estudo, a consistência dos seus streaks, sua regularidade e penaliza a irregularidade (Desvio Padrão).\n\n' + 
-            '**Fórmula:**\n' + 
-            '```\n' + // Código de bloco para clareza
-            'P = α * T + β * S + γ * C - δ * D\n' +
-            '```\n' +
-            '*Onde: T (Horas Totais), S (Streak Médio), C (Consistência), D (Desvio Padrão).*\n' +
-            'Os pesos (α, β, γ, δ) são configuráveis via variáveis de ambiente.';
-
+        // -----------------------------
+        // EMBED FINAL
+        // -----------------------------
         const embed = new EmbedBuilder()
-            .setTitle('🏆 Ranking de Produtividade')
-            .setDescription('Aqui está a lista dos usuários mais focados e consistentes!')
-            .addFields(rankField)
+            .setTitle("🏆 Ranking de Produtividade")
+            .setDescription(description)
             .addFields({
-                name: 'Detalhes da Pontuação',
-                value: formulaText,
+                name: "📐 Fórmula",
+                value:
+`\`\`\`
+Produtividade = Horas × (1 + Streak/7) ÷ (CV + Gamma)
+\`\`\`
+• Horas ↑ = mais pontos  
+• Streak ↑ = multiplicador  
+• CV ↓ = mais consistência`,
                 inline: false
             })
-            .setColor(0xFFD700)
-            .setFooter({ text: `Exibindo os Top ${topUsers.length} de ${dataset.length} usuários. | Pesos: α=${ALPHA}, β=${BETA}, γ=${GAMMA}, δ=${DELTA}` });
+            .setFooter({ text: `Gamma atual: ${GAMMA}` })
+            .setTimestamp()
+            .setColor("#00FF7F");
 
         await interaction.editReply({ embeds: [embed] });
     }

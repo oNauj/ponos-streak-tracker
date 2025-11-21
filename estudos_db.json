@@ -1,24 +1,41 @@
 {
   "users": {
     "799273781339357205": {
-      "totalTime": 5441,
+      "totalTime": 44142154,
       "currentStreak": 0,
-      "dailyTime": 5441,
-      "lastStudyDate": 1763498198349,
-      "history": []
+      "dailyTime": 21941469,
+      "lastStudyDate": 1763685497771,
+      "history": [
+        {
+          "date": "2025-11-19",
+          "ms": 19928412
+        }
+      ]
     },
     "561892405435957294": {
+      "totalTime": 43717390,
+      "currentStreak": 1,
+      "dailyTime": 19687060,
+      "lastStudyDate": 1763690730712,
+      "history": [
+        {
+          "date": "2025-11-19",
+          "ms": 24030330
+        }
+      ]
+    },
+    "1367887465737621586": {
       "totalTime": 0,
       "currentStreak": 0,
       "dailyTime": 0,
       "lastStudyDate": 0,
       "history": []
     },
-    "1425176782088441906": {
-      "totalTime": 0,
+    "1424587144701153472": {
+      "totalTime": 203171,
       "currentStreak": 0,
-      "dailyTime": 0,
-      "lastStudyDate": 0,
+      "dailyTime": 203171,
+      "lastStudyDate": 1763691001141,
       "history": []
     }
   }
