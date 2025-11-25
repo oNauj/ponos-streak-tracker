@@ -10,12 +10,21 @@ function calculateStats(values) {
     const n = values.length;
     const mean = values.reduce((a, b) => a + b, 0) / n;
 
-    if (n === 1) return { mean, stdDev: 0, cv: 0 }; // evita NaN com 1 valor
+    if (n === 1) return { mean, stdDev: 0, cv: 0 };
 
     const variance = values.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / n;
     const stdDev = Math.sqrt(variance);
 
     return { mean, stdDev, cv: mean === 0 ? 0 : stdDev / mean };
+}
+
+// -----------------------------
+// NORMALIZAÇÃO DO CV
+// -----------------------------
+function normalizeCV(cv, n, idealN = 14) {
+    if (n <= 1) return 0; // CV não confiável — reduz completamente
+    const confidence = Math.min(1, n / idealN);
+    return cv * confidence;
 }
 
 module.exports = {
@@ -29,7 +38,7 @@ module.exports = {
 
         const users = db.getAllUsers();
         if (!users || users.length === 0)
-            return interaction.editReply("🚫 Nenhum usuário encontrado para calcular o ranking.");
+            return interaction.editReply("Nenhum usuário encontrado para calcular o ranking.");
 
         const GAMMA = parseFloat(process.env.PROD_GAMMA) || 0.5;
         const RANK_LIMIT = 10;
@@ -50,19 +59,21 @@ module.exports = {
             const streak7 = Math.min(7, u.currentStreak || 0);
 
             // -----------------------------
-            // HORAS PARA CÁLCULO DO CV
+            // HISTÓRICO PARA CÁLCULO DO CV
             // -----------------------------
             const historyHours = (u.history || []).map(h =>
                 h.ms ? h.ms / 3600000 : 0
             );
 
-            // adiciona o dailyTime como mais um ponto do histórico
             if (u.dailyTime && u.dailyTime > 0) {
                 historyHours.push(u.dailyTime / 3600000);
             }
 
             const stats = calculateStats(historyHours);
-            const CV = stats.cv;
+            const rawCV = stats.cv;
+
+            const n = historyHours.length;
+            const CV = normalizeCV(rawCV, n);
 
             // -----------------------------
             // FÓRMULA FINAL
@@ -90,7 +101,7 @@ module.exports = {
         let description = "";
 
         // -----------------------------
-        // MONTAR A LISTA VISUAL
+        // MONTAR LISTA VISUAL
         // -----------------------------
         for (let i = 0; i < topUsers.length; i++) {
             const d = topUsers[i];
@@ -101,9 +112,6 @@ module.exports = {
             if (rank === 2) medal = "🥈";
             if (rank === 3) medal = "🥉";
 
-            // -----------------------------
-            // MENÇÃO CLICÁVEL
-            // -----------------------------
             let mention = `<@${d.id}>`;
 
             try {
@@ -118,11 +126,11 @@ module.exports = {
                 }
             }
 
-            description += 
+            description +=
 `**${medal} ${mention} — ${d.score.toFixed(1)} pts**
 🕒 ${Math.round(d.hours)}h  
 🔥 Streak: ${d.streak7}/7  
-📊 CV: ${(d.cv * 100).toFixed(1)}%
+📊 CV (normalizado): ${(d.cv * 100).toFixed(1)}%
 
 `;
         }
@@ -131,17 +139,18 @@ module.exports = {
         // EMBED FINAL
         // -----------------------------
         const embed = new EmbedBuilder()
-            .setTitle("🏆 Ranking de Produtividade")
+            .setTitle("Ranking de Produtividade")
             .setDescription(description)
             .addFields({
-                name: "📐 Fórmula",
+                name: "Fórmula",
                 value:
 `\`\`\`
-Produtividade = Horas × (1 + Streak/7) ÷ (CV + Gamma)
+Produtividade = Horas × (1 + Streak/7) ÷ (CV_normalizado + Gamma)
 \`\`\`
 • Horas ↑ = mais pontos  
 • Streak ↑ = multiplicador  
-• CV ↓ = mais consistência`,
+• CV_normalizado ↓ = mais consistência
+• CV é suavizado para usuários com poucos dias de histórico`,
                 inline: false
             })
             .setFooter({ text: `Gamma atual: ${GAMMA}` })
