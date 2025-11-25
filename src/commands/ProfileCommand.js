@@ -1,9 +1,52 @@
 const { SlashCommandBuilder, EmbedBuilder } = require("discord.js");
-const StudyTrackerService = require("../services/StudyTrackerService"); 
-const MathUtils = require('../utils/MathUtils');
+const MathUtils = require('../utils/MathUtils'); 
+
+/**
+ * Função FINAL CORRIGIDA: Garante que um array exato de 'days' dias seja retornado, 
+ * com o tempo do dia atual (dailyTime) sendo priorizado.
+ * @param {object} rawStats - Dados do usuário (totalTime, dailyTime, history).
+ * @param {number} days - Número de dias para analisar (ex: 7 ou 30).
+ * @returns {number[]} Array de horas em sequência, do dia mais antigo ao mais recente.
+ */
+function getDataPointsForRange(rawStats, days) {
+    const dataPoints = [];
+    
+    // Objeto para consolidar dados históricos por data string (YYYY-MM-DD)
+    const historyMap = new Map();
+    
+    // 1. Mapeia dados históricos para fácil acesso
+    for (const entry of rawStats.history) {
+        // A chave será a data string
+        historyMap.set(entry.date, entry.ms);
+    }
+
+    // 2. Determina a data de "Hoje" para priorizar dailyTime
+    const now = new Date();
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    
+    // Adiciona o dailyTime de hoje ao mapa, sobrescrevendo qualquer histórico se houver bug de log.
+    historyMap.set(todayStr, rawStats.dailyTime || 0);
+
+    // 3. Itera o número exato de dias (days) retrocedendo a partir de hoje
+    // Percorre do dia mais antigo (days-1) até o dia atual (0)
+    for (let i = days - 1; i >= 0; i--) {
+        const d = new Date();
+        d.setDate(d.getDate() - i); 
+        
+        const fullDateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        
+        const ms = historyMap.get(fullDateStr) || 0;
+        
+        // Converte milissegundos para horas e adiciona ao array de pontos
+        const hours = ms / (1000 * 60 * 60);
+        dataPoints.push(+hours.toFixed(2));
+    }
+    
+    return dataPoints;
+}
+
 
 module.exports = {
-    // Estrutura do Slash Command
     data: new SlashCommandBuilder()
         .setName('perfil')
         .setDescription('Mostra estatísticas suas ou de um amigo (Tempo, Streak, Consistência).')
@@ -20,30 +63,27 @@ module.exports = {
                 ).setRequired(false)
         ),
 
-    /**
-     * Como vai funcionar o comando
-     * @param {object} interaction O objeto de interação do Discord.
-     * @param {StudyTrackerService} trackerService O serviço de rastreamento (passado pelo cliente).
-     */
     async execute(interaction, trackerService) {
         const targetUser = interaction.options.getUser('usuario') || interaction.user;
         const rawStats = trackerService.db.getUser(targetUser.id);
         const range = interaction.options.getString('range');
         
-        if (rawStats.totalTime === 0 && targetUser.id === interaction.user.id) {
-            return interaction.reply({ content: "Você ainda não tem tempo registrado. Comece a compartilhar sua tela para estudar!", flags: 64 });
+        if (!rawStats || rawStats.totalTime === 0 && targetUser.id === interaction.user.id) {
+            return interaction.reply({ content: "Você ainda não tem tempo registrado. Comece a compartilhar sua tela para estudar!", ephemeral: true });
         }
 
-        // Se pediu gráfico, gera gráfico dos últimos N dias via QuickChart
+        const stats = trackerService.getFormattedStats(targetUser.id, rawStats); 
+        
+        // --- SEÇÃO DO GRÁFICO (if (range)) ---
         if (range) {
             const days = parseInt(range, 10);
             const labels = [];
-            const hours = require('../utils/MathUtils').hoursArrayForRange(rawStats.history, rawStats.lastStudyDate, days);
-            // montar labels (últimos dias)
-            const dayMs = 24 * 60 * 60 * 1000;
+            const hours = getDataPointsForRange(rawStats, days); // Usa a função CORRIGIDA
+
             for (let i = days - 1; i >= 0; i--) {
-                const d = new Date((rawStats.lastStudyDate || Date.now()) - (i * dayMs));
-                labels.push(`${d.getDate()}/${d.getMonth()+1}`);
+                const d = new Date();
+                d.setDate(d.getDate() - i);
+                labels.push(`${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`);
             }
 
             const chartConfig = {
@@ -62,6 +102,7 @@ module.exports = {
             };
 
             try {
+                // ... (código QuickChart) ...
                 const res = await fetch('https://quickchart.io/chart/create', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -70,72 +111,77 @@ module.exports = {
                 const body = await res.json();
                 const imageUrl = body.url;
 
+                // CÁLCULOS REAIS: Usamos 30 dias de dados para as métricas.
+                const hoursForMetrics = getDataPointsForRange(rawStats, 30); 
+
+                const consistencyPct = MathUtils.consistencyPercent(hoursForMetrics, trackerService.MIN_HOURS_FOR_STREAK).toFixed(1);
+                const stddev = MathUtils.stdDevHours(hoursForMetrics).toFixed(2);
+
+                const consistencyDescription = `mede a % de dias (últimos 30) que você bateu a meta de ${trackerService.MIN_HOURS_FOR_STREAK}h.`;
+                const stddevDescription = `mede a variabilidade de seu estudo (quanto maior, menos consistente).`;
+                
                 const embed = new EmbedBuilder()
                     .setTitle(`📈 ${targetUser.username} — Últimos ${days} dias`)
                     .setImage(imageUrl)
                     .setColor(0x0099FF)
+                    .addFields(
+                        { name: `Consistência (%) - ${consistencyDescription}`, value: `${consistencyPct}%`, inline: true },
+                        { name: `Desvio Padrão (h) - ${stddevDescription}`, value: `${stddev}h`, inline: true }
+                    )
                     .setFooter({ text: 'Use /perfil sem range para ver resumo.' });
-
-                // adiciona pequenas estatísticas abaixo
-                const consistencyPct = require('../utils/MathUtils').consistencyPercent(rawStats.history, rawStats.lastStudyDate, Math.min(days, 30));
-                const stddev = require('../utils/MathUtils').stdDevHours(rawStats.history, rawStats.lastStudyDate, Math.min(days, 30));
-
-                embed.addFields(
-                    { name: 'Consistência (%)', value: `${consistencyPct}%`, inline: true },
-                    { name: 'Desvio Padrão (h)', value: `${stddev}h`, inline: true }
-                );
 
                 return interaction.reply({ embeds: [embed] });
             } catch (err) {
                 console.error('Erro ao gerar gráfico:', err);
-                return interaction.reply({ content: 'Não foi possível gerar o gráfico no momento.', flags: 64 });
+                return interaction.reply({ content: 'Não foi possível gerar o gráfico no momento.', ephemeral: true });
             }
         }
 
-        // Obtém os dados formatados do serviço de lógica de negócios
-        const stats = trackerService.getFormattedStats(targetUser.id, rawStats);
-
-        // Cria uma barra de progresso simples
+        // --- SEÇÃO DO RESUMO (sem range) ---
+        
+        // Barra de progresso
         const progressBarLength = 15;
         const filled = Math.round((stats.progressPercentage / 100) * progressBarLength);
         const empty = progressBarLength - filled;
         const bar = "█".repeat(filled) + "░".repeat(empty);
 
-        // Cálculo de melhoria: compara hoje (rawStats.dailyTime) com ontem (extraído do histórico)
+        // Busca dos últimos 30 dias para cálculo (Usa a função CORRIGIDA)
+        const hoursInHistory = getDataPointsForRange(rawStats, 30); 
+        
+        // Cálculo da Média 7d e Análise Recente...
+        const last7DaysHours = hoursInHistory.slice(-7); 
+        const totalLast7 = last7DaysHours.reduce((a, b) => a + b, 0);
+        const avgLast7 = last7DaysHours.length > 0 ? (totalLast7 / last7DaysHours.length).toFixed(2) : 0;
         const todayHours = +( (rawStats.dailyTime || 0) / (1000 * 60 * 60) ).toFixed(2);
-        const lastDate = rawStats.lastStudyDate || Date.now();
-        const last2 = MathUtils.hoursArrayForRange(rawStats.history, lastDate, 2); // [yesterday, today]
-        const yesterdayHours = +(last2[0] || 0).toFixed(2);
+        let improvementText = 'Estude mais um pouco para calcular a média semanal!';
+        const avgLast6Days = last7DaysHours.length > 6 ? last7DaysHours.slice(0, 6).reduce((a, b) => a + b, 0) / 6 : 0;
 
-        let improvementPctText = 'Dados insuficientes para calcular melhoria.';
-        let projectionText = '';
-        if (yesterdayHours > 0) {
-            const r = (todayHours - yesterdayHours) / yesterdayHours; // razão (p.ex. 0.01 = +1%)
-            const rPct = +(r * 100).toFixed(2);
-            improvementPctText = `${rPct >= 0 ? '▲' : '▼'} ${Math.abs(rPct)}% (hoje vs ontem)`;
+        if (avgLast6Days > 0) {
+            const diff = todayHours - avgLast6Days;
+            const diffPct = (diff / avgLast6Days * 100).toFixed(2);
+            const symbol = diff >= 0 ? '▲' : '▼';
+            improvementText = `${symbol} ${Math.abs(diffPct)}% (hoje vs média dos últimos 6 dias)`;
+        } 
 
-            // Projeção por PG: se mantiver essa melhoria relativa, nextDay = today * (1 + r)
-            const daysToProj = 7;
-            const proj = [];
-            for (let k = 1; k <= daysToProj; k++) {
-                const val = +(todayHours * Math.pow(1 + r, k)).toFixed(2);
-                const pct = r >= 0 ? +((Math.pow(1 + r, k) - 1) * 100).toFixed(2) : +((1 - Math.pow(1 + r, k)) * 100).toFixed(2);
-                proj.push(`Dia +${k}: ${val}h (${r >= 0 ? '+' : '-'}${Math.abs(pct)}% em relação a hoje)`);
-            }
-            projectionText = proj.join('\n');
-        } else if (yesterdayHours === 0 && todayHours > 0) {
-            // Caso ontem 0: melhoria indefinida; mostra crescimento absoluto e projeta com um pequeno r padrão (ex: 0.01 = 1%)
-            improvementPctText = `▲ Crescimento a partir de 0h — aumento absoluto: ${todayHours}h hoje`;
-            const r = 0.01; // default 1% se quiser projetar
-            const daysToProj = 7;
-            const proj = [];
-            for (let k = 1; k <= daysToProj; k++) {
-                const val = +(todayHours * Math.pow(1 + r, k)).toFixed(2);
-                const pct = +((Math.pow(1 + r, k) - 1) * 100).toFixed(2);
-                proj.push(`Dia +${k}: ${val}h (+${pct}% em relação a hoje)`);
-            }
-            projectionText = proj.join('\n');
+        // Projeção...
+        const daysToProj = 7;
+        let projectionText = 'Sem dados de histórico para projeção.';
+        if (avgLast7 > 0) {
+            const projectedHours = +(avgLast7 * daysToProj).toFixed(2);
+            const totalHours = +(rawStats.totalTime / (1000 * 60 * 60)).toFixed(2);
+            const totalProjected = +(totalHours + projectedHours).toFixed(2);
+
+            projectionText = 
+                `**Média Diária (7d):** ${avgLast7}h\n` +
+                `**Previsão ${daysToProj} dias:** ${projectedHours}h adicionais\n` +
+                `**Total Projetado:** ${totalProjected}h`;
         }
+        
+        // Métrica de consistência no resumo (30 dias)
+        const consistencyPctSummary = MathUtils.consistencyPercent(hoursInHistory, trackerService.MIN_HOURS_FOR_STREAK).toFixed(1);
+        
+        // Campo com explicação detalhada
+        const consistencyValue = `**${consistencyPctSummary}%**\n*Mede a % de dias (últimos 30) em que você atingiu ou superou a meta de ${stats.targetHours}h, focando na disciplina regular.*`;
 
         const embed = new EmbedBuilder()
             .setTitle(`📊 Estatísticas de ${targetUser.username}`)
@@ -149,13 +195,13 @@ module.exports = {
                     value: `${bar} ${stats.progressPercentage}% concluído`, 
                     inline: false 
                 },
-                { name: "Análise Estatística", value: stats.consistency, inline: false },
-                { name: "Melhoria (hoje vs ontem)", value: improvementPctText, inline: false },
-                { name: "Projeção (próximos 7 dias se mantiver essa melhoria)", value: projectionText || 'Sem dados para projeção', inline: false }
+                { name: "Análise de Desempenho (Consistência)", value: consistencyValue, inline: false },
+                { name: "Análise Recente", value: improvementText, inline: false },
+                { name: `Projeção (Baseada na Média de 7 dias)`, value: projectionText, inline: false }
             )
             .setColor(0x0099FF)
             .setTimestamp()
-            .setFooter({ text: 'Mantenha o Foco!' });
+            .setFooter({ text: 'Use /perfil range:[7|30] para ver gráficos.' });
 
         await interaction.reply({ embeds: [embed] });
     }

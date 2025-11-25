@@ -1,26 +1,62 @@
 {
   "users": {
     "799273781339357205": {
-      "totalTime": 44142154,
+      "totalTime": 128215072,
       "currentStreak": 0,
-      "dailyTime": 21941469,
-      "lastStudyDate": 1763685497771,
+      "dailyTime": 2681,
+      "lastStudyDate": 1764039808172,
       "history": [
         {
-          "date": "2025-11-19",
+          "date": "2025-11-20",
           "ms": 19928412
+        },
+        {
+          "date": "2025-11-21",
+          "ms": 21941469
+        },
+        {
+          "date": "2025-11-22",
+          "ms": 21545795
+        },
+        {
+          "date": "2025-11-23",
+          "ms": 22978391
+        },
+        {
+          "date": "2025-11-24",
+          "ms": 24219515
+        },
+        {
+          "date": "2025-11-24",
+          "ms": 17598809
         }
       ]
     },
     "561892405435957294": {
-      "totalTime": 43717390,
-      "currentStreak": 1,
-      "dailyTime": 19687060,
-      "lastStudyDate": 1763690730712,
+      "totalTime": 126911631,
+      "currentStreak": 0,
+      "dailyTime": 23163167,
+      "lastStudyDate": 1763992980359,
       "history": [
         {
-          "date": "2025-11-19",
+          "date": "2025-11-20",
           "ms": 24030330
+        },
+        {
+          "date": "2025-11-21",
+          "ms": 21756951
+        },
+        {
+          "date": "2025-11-22",
+          "ms": 21600000
+        },
+        {
+          "date": "2025-11-23",
+          "ms": 21600000
+        },
+        {
+          "date": "2025-11-24",
+          "ms": 14761183
         }
       ]
     },
@@ -36,6 +72,13 @@
       "currentStreak": 0,
       "dailyTime": 203171,
       "lastStudyDate": 1763691001141,
+      "history": []
+    },
+    "1374826016077512814": {
+      "totalTime": 511680,
+      "currentStreak": 0,
+      "dailyTime": 511680,
+      "lastStudyDate": 1763749274834,
       "history": []
     }
   }
